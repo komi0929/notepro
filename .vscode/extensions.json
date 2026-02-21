@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+    "prisma.prisma",
+    "usernamehw.errorlens",
+    "eamodio.gitlens",
+    "formulahendry.auto-rename-tag",
+    "ms-playwright.playwright",
+    "humao.rest-client",
+    "streetsidesoftware.code-spell-checker",
+    "ZixuanChen.vitest-explorer"
+  ]
+}
