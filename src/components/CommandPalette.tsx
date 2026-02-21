@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export function CommandPalette() {
   const { isCommandPaletteOpen, toggleCommandPalette, articles } =
@@ -23,6 +24,7 @@ export function CommandPalette() {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
   // Filter articles by query (search title, hashtags, creator name)
   const filteredArticles = query
@@ -74,9 +76,16 @@ export function CommandPalette() {
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex((prev) => Math.max(prev - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const selected = filteredArticles[selectedIndex];
+        if (selected) {
+          toggleCommandPalette();
+          router.push(`/articles/${selected.id}`);
+        }
       }
     },
-    [filteredArticles.length],
+    [filteredArticles, selectedIndex, toggleCommandPalette, router],
   );
 
   return (
@@ -175,17 +184,21 @@ export function CommandPalette() {
                                 {tag}
                               </span>
                             ))}
-                            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                              <Clock className="w-2.5 h-2.5" />
-                              {article.readingTime}分
-                            </span>
-                            <span className="flex items-center gap-0.5 text-[10px] text-error-500">
-                              <Heart className="w-2.5 h-2.5 fill-current" />
-                              {article.likeCount}
-                            </span>
+                            {article.readingTime > 0 && (
+                              <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                <Clock className="w-2.5 h-2.5" />約
+                                {article.readingTime}分
+                              </span>
+                            )}
+                            {article.likeCount > 0 && (
+                              <span className="flex items-center gap-0.5 text-[10px] text-error-500">
+                                <Heart className="w-2.5 h-2.5 fill-current" />
+                                {article.likeCount}
+                              </span>
+                            )}
                           </div>
                         </div>
-                        <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                       </div>
                     </Link>
                   ))}

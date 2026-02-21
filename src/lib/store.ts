@@ -14,13 +14,9 @@ function calcFreshnessScore(savedAt: string): number {
 /** 時間帯に合った読書時間かどうか */
 function isGoodTimeForReading(readingTime: number): boolean {
   const hour = new Date().getHours();
-  // 朝・通勤: 短め (5-10分)
   if (hour >= 6 && hour < 9) return readingTime <= 10;
-  // 昼休み: 中程度 (5-15分)
   if (hour >= 12 && hour < 14) return readingTime <= 15;
-  // 夜: 長めもOK
   if (hour >= 20) return true;
-  // それ以外: 短め推奨
   return readingTime <= 10;
 }
 
@@ -28,24 +24,14 @@ function isGoodTimeForReading(readingTime: number): boolean {
 function calcPriority(article: Article): number {
   const freshness = calcFreshnessScore(article.savedAt);
   let score = 0;
-
-  // 未読は高優先度
   if (article.status === "unread") score += 0.4;
-  else if (article.status === "reading") score += 0.3;
-
-  // 鮮度が高い = 優先度高い
   score += freshness * 0.3;
-
-  // 時間帯にフィットする記事を優先
   if (isGoodTimeForReading(article.readingTime)) score += 0.2;
-
-  // スキ数による補正 (多い = 質が高い可能性)
   if (article.likeCount > 100) score += 0.1;
-
   return Math.min(1, score);
 }
 
-/** 全記事のスコアを再計算して返す */
+/** 全記事のスコアを再計算 */
 function applyDynamicScores(articles: Article[]): Article[] {
   return articles.map((a) => ({
     ...a,
@@ -59,11 +45,12 @@ function applyDynamicScores(articles: Article[]): Article[] {
 
 function computeStats(articles: Article[]): ReadingStats {
   const readArticles = articles.filter((a) => a.status === "read");
-  const allArticles = articles.filter((a) => a.status !== "archived");
+  const activeArticles = articles.filter((a) => a.status !== "archived");
+  const unreadArticles = activeArticles.filter((a) => a.status === "unread");
 
-  // === ハッシュタグ集計 ===
+  // ハッシュタグ集計
   const tagCounts: Record<string, number> = {};
-  allArticles.forEach((a) => {
+  activeArticles.forEach((a) => {
     a.hashtags.forEach((tag) => {
       tagCounts[tag] = (tagCounts[tag] || 0) + 1;
     });
@@ -73,12 +60,12 @@ function computeStats(articles: Article[]): ReadingStats {
     .slice(0, 5)
     .map(([name, count]) => ({ name, count }));
 
-  // === クリエイター集計 ===
+  // クリエイター集計
   const creatorCounts: Record<
     string,
     { name: string; urlname: string; count: number }
   > = {};
-  allArticles.forEach((a) => {
+  activeArticles.forEach((a) => {
     const key = a.creator.urlname;
     if (!creatorCounts[key]) {
       creatorCounts[key] = { name: a.creator.nickname, urlname: key, count: 0 };
@@ -89,7 +76,7 @@ function computeStats(articles: Article[]): ReadingStats {
     .sort((a, b) => b.count - a.count)
     .slice(0, 5);
 
-  // === 週間読了数（直近7日の読了日から計算） ===
+  // 週間読了数
   const weeklyRead = [0, 0, 0, 0, 0, 0, 0];
   const now = new Date();
   readArticles.forEach((a) => {
@@ -99,13 +86,13 @@ function computeStats(articles: Article[]): ReadingStats {
         (now.getTime() - readDate.getTime()) / 86400000,
       );
       if (dayDiff < 7) {
-        const dayIndex = (readDate.getDay() + 6) % 7; // 月=0, 日=6
+        const dayIndex = (readDate.getDay() + 6) % 7;
         weeklyRead[dayIndex] += 1;
       }
     }
   });
 
-  // === 先週の読了数（成長率計算用） ===
+  // 先週の読了数（成長率計算用）
   const lastWeeklyRead = [0, 0, 0, 0, 0, 0, 0];
   readArticles.forEach((a) => {
     if (a.readAt) {
@@ -129,8 +116,7 @@ function computeStats(articles: Article[]): ReadingStats {
         ? 100
         : 0;
 
-  // === ストリーク計算（正確版） ===
-  // 読了日のセットを作成
+  // ストリーク（読了マークした連続日数）
   const readDatesSet = new Set<string>();
   readArticles.forEach((a) => {
     if (a.readAt) {
@@ -139,7 +125,6 @@ function computeStats(articles: Article[]): ReadingStats {
     }
   });
 
-  // 現在のストリーク
   let streak = 0;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -150,15 +135,12 @@ function computeStats(articles: Article[]): ReadingStats {
     if (readDatesSet.has(key)) {
       streak++;
     } else if (i > 0) {
-      // 今日まだ読んでない場合はスキップ（ストリークを維持）
       break;
     }
   }
 
-  // ベストストリーク（全読了日から最長連続日数を算出）
   let bestStreak = streak;
   if (readDatesSet.size > 0) {
-    // 全読了日をソート
     const sortedDates = Array.from(readDatesSet)
       .map((s) => {
         const [y, m, d] = s.split("-").map(Number);
@@ -175,13 +157,13 @@ function computeStats(articles: Article[]): ReadingStats {
       } else if (diffDays > 1) {
         currentRun = 1;
       }
-      // diffDays === 0 はスキップ（同日の複数記事）
     }
   }
 
   return {
     totalRead: readArticles.length,
-    totalSaved: allArticles.length || 1,
+    totalSaved: activeArticles.length || 1,
+    unreadCount: unreadArticles.length,
     weeklyRead,
     weeklyGrowthPercent,
     topHashtags:
@@ -194,25 +176,18 @@ function computeStats(articles: Article[]): ReadingStats {
         : [{ name: "まだデータなし", urlname: "-", count: 0 }],
     streak,
     bestStreak,
-    averageReadingTime:
-      readArticles.length > 0
-        ? Math.round(
-            readArticles.reduce((sum, a) => sum + a.readingTime, 0) /
-              readArticles.length,
-          )
-        : 0,
   };
 }
 
 // === Store ===
 interface AppState {
-  // Articles
   articles: Article[];
   queueArticles: Article[];
   archiveSuggestions: ArchiveSuggestion[];
   readingStats: ReadingStats;
   isLoading: boolean;
   dbError: string | null;
+  lastSavedArticle: Article | null;
 
   // UI State
   isCommandPaletteOpen: boolean;
@@ -228,13 +203,14 @@ interface AppState {
   openArchiveModal: () => void;
   closeArchiveModal: () => void;
   setFilter: (filter: string | null) => void;
+  clearLastSaved: () => void;
 
   // DB Actions
   fetchArticles: () => Promise<void>;
-  saveArticle: (url: string, action: string) => Promise<void>;
+  saveArticle: (url: string) => Promise<void>;
   archiveArticles: (ids: string[]) => Promise<void>;
-  updateProgress: (id: string, progress: number) => Promise<void>;
   markAsRead: (id: string) => Promise<void>;
+  markAsUnread: (id: string) => Promise<void>;
   updateMemo: (id: string, memo: string) => Promise<void>;
   deleteArticle: (id: string) => Promise<void>;
   deleteAllArticles: () => Promise<void>;
@@ -246,7 +222,7 @@ function deriveFromArticles(articles: Article[]) {
 
   return {
     queueArticles: activeArticles
-      .filter((a) => a.status === "unread" || a.status === "reading")
+      .filter((a) => a.status === "unread")
       .sort((a, b) => b.priority - a.priority)
       .slice(0, 3),
     archiveSuggestions: activeArticles
@@ -261,23 +237,26 @@ function deriveFromArticles(articles: Article[]) {
   };
 }
 
+const defaultStats: ReadingStats = {
+  totalRead: 0,
+  totalSaved: 1,
+  unreadCount: 0,
+  weeklyRead: [0, 0, 0, 0, 0, 0, 0],
+  weeklyGrowthPercent: 0,
+  topHashtags: [{ name: "まだデータなし", count: 0 }],
+  topCreators: [{ name: "まだデータなし", urlname: "-", count: 0 }],
+  streak: 0,
+  bestStreak: 0,
+};
+
 export const useAppStore = create<AppState>((set) => ({
   articles: [],
   queueArticles: [],
   archiveSuggestions: [],
-  readingStats: {
-    totalRead: 0,
-    totalSaved: 1,
-    weeklyRead: [0, 0, 0, 0, 0, 0, 0],
-    weeklyGrowthPercent: 0,
-    topHashtags: [{ name: "まだデータなし", count: 0 }],
-    topCreators: [{ name: "まだデータなし", urlname: "-", count: 0 }],
-    streak: 0,
-    bestStreak: 0,
-    averageReadingTime: 0,
-  },
+  readingStats: defaultStats,
   isLoading: true,
   dbError: null,
+  lastSavedArticle: null,
 
   // UI State
   isCommandPaletteOpen: false,
@@ -295,6 +274,7 @@ export const useAppStore = create<AppState>((set) => ({
   openArchiveModal: () => set({ isArchiveModalOpen: true }),
   closeArchiveModal: () => set({ isArchiveModalOpen: false }),
   setFilter: (filter) => set({ currentFilter: filter }),
+  clearLastSaved: () => set({ lastSavedArticle: null }),
 
   // === DB Actions ===
 
@@ -310,7 +290,6 @@ export const useAppStore = create<AppState>((set) => ({
       if (error) throw error;
 
       const rawArticles = (data as ArticleRow[]).map(rowToArticle);
-      // 動的スコアを適用
       const articles = applyDynamicScores(rawArticles);
 
       set({
@@ -328,32 +307,20 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  saveArticle: async (url, action) => {
-    // note.com URL解析
+  saveArticle: async (url) => {
     const noteMatch = url.match(/note\.com\/([^/]+)\/n\/([^/?#]+)/);
     const creatorUrlname = noteMatch ? noteMatch[1] : "unknown";
     const noteId = noteMatch ? noteMatch[2] : `n${Date.now()}`;
 
-    // 1. note.comからメタデータを取得
-    let metadata: {
-      title: string;
-      excerpt: string | null;
-      coverImageUrl: string | null;
-      creatorNickname: string;
-      creatorUrlname: string;
-      creatorProfileImage: string | null;
-      hashtags: string[];
-      isPaid: boolean;
-      wordCount: number;
-      readingTime: number;
-    } = {
+    // メタデータ取得
+    let metadata = {
       title: url,
-      excerpt: null,
-      coverImageUrl: null,
+      excerpt: null as string | null,
+      coverImageUrl: null as string | null,
       creatorNickname: creatorUrlname,
       creatorUrlname: creatorUrlname,
-      creatorProfileImage: null,
-      hashtags: [],
+      creatorProfileImage: null as string | null,
+      hashtags: [] as string[],
       isPaid: false,
       wordCount: 0,
       readingTime: 0,
@@ -369,13 +336,10 @@ export const useAppStore = create<AppState>((set) => ({
         metadata = await res.json();
       }
     } catch (err) {
-      console.warn("Metadata fetch failed, using defaults:", err);
+      console.warn("Metadata fetch failed:", err);
     }
 
-    // 2. メタデータ付きでDBに保存
-    // excerptをaiSummaryとして利用（AI API不要）
     const aiSummary = metadata.excerpt || null;
-    // ハッシュタグをキーポイントとして整形
     const aiKeyPoints =
       metadata.hashtags.length > 0
         ? metadata.hashtags.slice(0, 5).map((tag) => `#${tag} に関する記事`)
@@ -401,13 +365,10 @@ export const useAppStore = create<AppState>((set) => ({
       wordCount: metadata.wordCount || 0,
       readingTime: metadata.readingTime || 0,
       status: "unread",
-      progress: 0,
       memo: null,
       priority: 0.8,
       freshnessScore: 1.0,
-      readabilityScore: 0.7,
       expiryScore: 1.0,
-      suggestedReadTime: null,
       aiSummary,
       aiKeyPoints,
       savedAt: new Date().toISOString(),
@@ -426,7 +387,6 @@ export const useAppStore = create<AppState>((set) => ({
       if (error) throw error;
 
       const saved = rowToArticle(data as ArticleRow);
-      console.log(`Article saved with action: ${action}`);
 
       set((state) => {
         const articles = applyDynamicScores([saved, ...state.articles]);
@@ -435,6 +395,7 @@ export const useAppStore = create<AppState>((set) => ({
           ...deriveFromArticles(articles),
           isSaveModalOpen: false,
           saveModalUrl: "",
+          lastSavedArticle: saved,
         };
       });
     } catch (err) {
@@ -470,44 +431,6 @@ export const useAppStore = create<AppState>((set) => ({
     }
   },
 
-  updateProgress: async (id, progress) => {
-    const newStatus =
-      progress >= 1 ? "read" : progress > 0 ? "reading" : "unread";
-    const readAt = progress >= 1 ? new Date().toISOString() : null;
-
-    try {
-      const updateData: Record<string, unknown> = {
-        progress,
-        status: newStatus,
-        updated_at: new Date().toISOString(),
-      };
-      if (readAt) updateData.read_at = readAt;
-
-      const { error } = await supabase
-        .from("articles")
-        .update(updateData)
-        .eq("id", id);
-
-      if (error) throw error;
-
-      set((state) => {
-        const articles = state.articles.map((a) =>
-          a.id === id
-            ? {
-                ...a,
-                progress,
-                status: newStatus as Article["status"],
-                readAt: readAt || a.readAt,
-              }
-            : a,
-        );
-        return { articles, ...deriveFromArticles(articles) };
-      });
-    } catch (err) {
-      console.error("Failed to update progress:", err);
-    }
-  },
-
   markAsRead: async (id) => {
     const now = new Date().toISOString();
     try {
@@ -525,14 +448,37 @@ export const useAppStore = create<AppState>((set) => ({
 
       set((state) => {
         const articles = state.articles.map((a) =>
-          a.id === id
-            ? { ...a, status: "read" as const, progress: 1.0, readAt: now }
-            : a,
+          a.id === id ? { ...a, status: "read" as const, readAt: now } : a,
         );
         return { articles, ...deriveFromArticles(articles) };
       });
     } catch (err) {
       console.error("Failed to mark as read:", err);
+    }
+  },
+
+  markAsUnread: async (id) => {
+    try {
+      const { error } = await supabase
+        .from("articles")
+        .update({
+          status: "unread",
+          progress: 0,
+          read_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      set((state) => {
+        const articles = state.articles.map((a) =>
+          a.id === id ? { ...a, status: "unread" as const, readAt: null } : a,
+        );
+        return { articles, ...deriveFromArticles(articles) };
+      });
+    } catch (err) {
+      console.error("Failed to mark as unread:", err);
     }
   },
 
@@ -581,17 +527,7 @@ export const useAppStore = create<AppState>((set) => ({
         articles: [],
         queueArticles: [],
         archiveSuggestions: [],
-        readingStats: {
-          totalRead: 0,
-          totalSaved: 1,
-          weeklyRead: [0, 0, 0, 0, 0, 0, 0],
-          weeklyGrowthPercent: 0,
-          topHashtags: [{ name: "まだデータなし", count: 0 }],
-          topCreators: [{ name: "まだデータなし", urlname: "-", count: 0 }],
-          streak: 0,
-          bestStreak: 0,
-          averageReadingTime: 0,
-        },
+        readingStats: defaultStats,
       });
     } catch (err) {
       console.error("Failed to delete all articles:", err);

@@ -25,7 +25,7 @@ export interface ArticleRow {
   word_count: number;
   reading_time: number;
   status: string;
-  progress: number;
+  progress: number; // DB column still exists, just ignored on frontend
   memo: string | null;
   priority: number;
   freshness_score: number;
@@ -62,14 +62,12 @@ export function rowToArticle(row: ArticleRow): Article {
     publishedAt: row.published_at,
     wordCount: row.word_count,
     readingTime: row.reading_time,
-    status: row.status as ArticleStatus,
-    progress: row.progress,
+    // Map DB 'reading' status to 'unread' (legacy data compatibility)
+    status: (row.status === "reading" ? "unread" : row.status) as ArticleStatus,
     memo: row.memo,
     priority: row.priority,
     freshnessScore: row.freshness_score,
-    readabilityScore: row.readability_score,
     expiryScore: row.expiry_score,
-    suggestedReadTime: row.suggested_read_time,
     aiSummary: row.ai_summary,
     aiKeyPoints: row.ai_key_points || [],
     savedAt: row.saved_at,
@@ -99,13 +97,13 @@ export function articleToRow(
     word_count: article.wordCount,
     reading_time: article.readingTime,
     status: article.status,
-    progress: article.progress,
+    progress: article.status === "read" ? 1.0 : 0,
     memo: article.memo,
     priority: article.priority,
     freshness_score: article.freshnessScore,
-    readability_score: article.readabilityScore,
+    readability_score: 0.7, // Legacy DB column
     expiry_score: article.expiryScore,
-    suggested_read_time: article.suggestedReadTime,
+    suggested_read_time: null, // Legacy DB column
     ai_summary: article.aiSummary,
     ai_key_points: article.aiKeyPoints,
     saved_at: article.savedAt,

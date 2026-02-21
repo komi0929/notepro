@@ -53,9 +53,12 @@ export function TodaysQueue({ articles }: TodaysQueueProps) {
             {queueTitle}
           </h2>
         </div>
-        <button className="text-sm text-primary-600 hover:text-primary-700 font-medium transition-colors">
+        <Link
+          href="/search"
+          className="text-sm text-primary-600 hover:text-primary-700 font-medium transition-colors"
+        >
           すべて見る
-        </button>
+        </Link>
       </div>
 
       {/* Insight Card */}
@@ -71,14 +74,14 @@ export function TodaysQueue({ articles }: TodaysQueueProps) {
           </div>
           <div className="flex-1">
             <p className="text-sm font-medium text-primary-900 mb-1">
-              今読むのに最適な記事が{articles.length}件あります
+              未読のおすすめが{articles.length}件あります
             </p>
             <p className="text-xs text-primary-700">
               {timeSlot === "morning"
-                ? "通勤時間にぴったりな5-10分のnote記事を選びました"
+                ? "通勤時間にぴったりな短めの記事を選びました"
                 : timeSlot === "evening"
                   ? "帰宅中にサクッと読めるnote記事です"
-                  : "じっくり読むのにおすすめのnote記事です"}
+                  : "じっくり読むのにおすすめの記事です"}
             </p>
           </div>
         </div>
@@ -150,14 +153,18 @@ function QueueArticleCard({
 
         {/* Metadata */}
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5" />
-            <span>{article.readingTime}分</span>
-          </div>
-          <div className="flex items-center gap-1 text-error-500">
-            <Heart className="w-3 h-3 fill-current" />
-            <span>{article.likeCount}</span>
-          </div>
+          {article.readingTime > 0 && (
+            <div className="flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />
+              <span>約{article.readingTime}分</span>
+            </div>
+          )}
+          {article.likeCount > 0 && (
+            <div className="flex items-center gap-1 text-error-500">
+              <Heart className="w-3 h-3 fill-current" />
+              <span>{article.likeCount}</span>
+            </div>
+          )}
           <span>{formatRelativeTime(article.savedAt)}</span>
         </div>
 
@@ -173,26 +180,6 @@ function QueueArticleCard({
                 {tag}
               </span>
             ))}
-          </div>
-        )}
-
-        {/* Progress Bar (if started reading) */}
-        {article.progress > 0 && article.progress < 1 && (
-          <div className="mt-3 pt-3 border-t border-border">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-muted-foreground">読書中</span>
-              <span className="text-xs font-medium text-primary-600">
-                {Math.round(article.progress * 100)}%
-              </span>
-            </div>
-            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-              <motion.div
-                className="h-full bg-gradient-to-r from-primary-500 to-primary-400 rounded-full"
-                initial={{ width: 0 }}
-                animate={{ width: `${article.progress * 100}%` }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
-              />
-            </div>
           </div>
         )}
       </motion.div>

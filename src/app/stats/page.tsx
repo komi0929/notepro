@@ -4,12 +4,12 @@ import {
   BookOpen,
   Flame,
   TrendingUp,
-  Clock,
   BarChart3,
   Trophy,
   Zap,
   Hash,
   User,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
@@ -20,9 +20,14 @@ export default function StatsPage() {
   const dayNames = ["月", "火", "水", "木", "金", "土", "日"];
   const maxWeekly = Math.max(...readingStats.weeklyRead, 1);
 
+  const digestRate =
+    readingStats.totalSaved > 0
+      ? Math.round((readingStats.totalRead / readingStats.totalSaved) * 100)
+      : 0;
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
-      <h1 className="text-2xl font-bold text-foreground mb-6">読書統計</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-6">統計</h1>
 
       {/* Streak Card */}
       <motion.div
@@ -32,7 +37,7 @@ export default function StatsPage() {
       >
         <div className="flex items-center justify-between mb-4">
           <div>
-            <p className="text-sm opacity-80 mb-1">連続読書ストリーク</p>
+            <p className="text-sm opacity-80 mb-1">連続読了ストリーク</p>
             <div className="flex items-baseline gap-2">
               <span className="text-4xl font-bold">{readingStats.streak}</span>
               <span className="text-lg opacity-80">日</span>
@@ -59,18 +64,16 @@ export default function StatsPage() {
         />
         <StatCard
           icon={<BarChart3 className="w-5 h-5 text-success-500" />}
-          value={Math.round(
-            (readingStats.totalRead / readingStats.totalSaved) * 100,
-          )}
+          value={digestRate}
           unit="%"
           label="消化率"
           delay={0.15}
         />
         <StatCard
-          icon={<Clock className="w-5 h-5 text-warning-500" />}
-          value={readingStats.averageReadingTime}
-          unit="分"
-          label="平均時間"
+          icon={<Inbox className="w-5 h-5 text-warning-500" />}
+          value={readingStats.unreadCount}
+          unit="件"
+          label="未読数"
           delay={0.2}
         />
       </div>
@@ -84,7 +87,7 @@ export default function StatsPage() {
       >
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-foreground">
-            今週の読書量
+            今週の読了数
           </h3>
           {readingStats.weeklyGrowthPercent !== 0 && (
             <div
@@ -146,7 +149,7 @@ export default function StatsPage() {
         <div className="space-y-3">
           {readingStats.topHashtags.map((tag, index) => {
             const maxCount = readingStats.topHashtags[0].count;
-            const percentage = (tag.count / maxCount) * 100;
+            const percentage = maxCount > 0 ? (tag.count / maxCount) * 100 : 0;
             const colors = [
               "from-primary-500 to-primary-400",
               "from-blue-500 to-blue-400",
@@ -236,17 +239,19 @@ export default function StatsPage() {
         <Zap className="w-6 h-6 text-primary-500 mx-auto mb-2" />
         <p className="text-sm font-medium text-foreground mb-0.5">
           {readingStats.streak >= 3
-            ? `${readingStats.streak}日連続読書中！🔥`
-            : readingStats.totalRead > 0
-              ? "いい調子です！🎉"
-              : "最初の記事を読了しましょう 📚"}
+            ? `${readingStats.streak}日連続読了中！🔥`
+            : readingStats.unreadCount > 0
+              ? `未読が${readingStats.unreadCount}件あります 📚`
+              : readingStats.totalRead > 0
+                ? "いい調子です！🎉"
+                : "最初のnoteを保存しましょう ✨"}
         </p>
         <p className="text-xs text-muted-foreground">
           {readingStats.weeklyGrowthPercent > 0
-            ? `先週より${readingStats.weeklyGrowthPercent}%多く読んでいます`
-            : readingStats.totalRead > 0
-              ? `合計${readingStats.totalRead}記事を読了しました`
-              : "note.comの記事を保存して読書を始めましょう"}
+            ? `先週より${readingStats.weeklyGrowthPercent}%多く読了しています`
+            : readingStats.unreadCount > 0
+              ? "気になったnoteを埋もれさせないように読みましょう"
+              : "note.comの記事を保存して管理を始めましょう"}
         </p>
       </motion.div>
     </div>

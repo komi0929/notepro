@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   StickyNote,
   User,
   Calendar,
+  Undo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
@@ -25,35 +26,47 @@ import { useAppStore } from "@/lib/store";
 export default function ArticleDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { articles, markAsRead, updateMemo } = useAppStore();
+  const { articles, markAsRead, markAsUnread, updateMemo } = useAppStore();
   const [showKeyPoints, setShowKeyPoints] = useState(false);
   const [memoText, setMemoText] = useState("");
   const [memoSaved, setMemoSaved] = useState(false);
+  const [showReadPrompt, setShowReadPrompt] = useState(false);
 
   const article = articles.find((a) => a.id === params.id);
 
   // Initialize memo text from article
-  useState(() => {
+  useEffect(() => {
     if (article?.memo) {
       setMemoText(article.memo);
     }
-  });
+  }, [article?.memo]);
 
-  const handleMarkAsRead = useCallback(() => {
+  const handleMarkAsRead = useCallback(async () => {
     if (article) {
-      markAsRead(article.id);
+      await markAsRead(article.id);
+      setShowReadPrompt(false);
     }
   }, [article, markAsRead]);
+
+  const handleMarkAsUnread = useCallback(async () => {
+    if (article) {
+      await markAsUnread(article.id);
+    }
+  }, [article, markAsUnread]);
 
   const handleOpenNote = useCallback(() => {
     if (article) {
       window.open(article.noteUrl, "_blank", "noopener,noreferrer");
+      // Show read prompt when user comes back
+      if (article.status === "unread") {
+        setTimeout(() => setShowReadPrompt(true), 500);
+      }
     }
   }, [article]);
 
-  const handleSaveMemo = useCallback(() => {
+  const handleSaveMemo = useCallback(async () => {
     if (article) {
-      updateMemo(article.id, memoText);
+      await updateMemo(article.id, memoText);
       setMemoSaved(true);
       setTimeout(() => setMemoSaved(false), 2000);
     }
@@ -79,6 +92,10 @@ export default function ArticleDetailPage() {
   const formattedDate = publishedDate
     ? `${publishedDate.getFullYear()}年${publishedDate.getMonth() + 1}月${publishedDate.getDate()}日`
     : "不明";
+
+  const daysSinceSaved = Math.floor(
+    (Date.now() - new Date(article.savedAt).getTime()) / 86400000,
+  );
 
   return (
     <div className="min-h-screen bg-background pb-32">
@@ -146,15 +163,26 @@ export default function ArticleDetailPage() {
             <Calendar className="w-3.5 h-3.5" />
             {formattedDate}
           </span>
-          <span className="flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5" />
-            {article.readingTime}分
-          </span>
-          <span className="flex items-center gap-1 text-error-500">
-            <Heart className="w-3.5 h-3.5 fill-current" />
-            {article.likeCount.toLocaleString()} スキ
-          </span>
+          {article.readingTime > 0 && (
+            <span className="flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />約{article.readingTime}分
+            </span>
+          )}
+          {article.likeCount > 0 && (
+            <span className="flex items-center gap-1 text-error-500">
+              <Heart className="w-3.5 h-3.5 fill-current" />
+              {article.likeCount.toLocaleString()} スキ
+            </span>
+          )}
         </div>
+
+        {/* Saved Since Info */}
+        {article.status === "unread" && daysSinceSaved > 0 && (
+          <div className="mt-3 px-3 py-2 rounded-xl bg-warning-50 border border-warning-100 text-xs text-warning-700">
+            📌 {daysSinceSaved}日前に保存しました
+            {daysSinceSaved >= 7 && " — そろそろ読んでみませんか？"}
+          </div>
+        )}
 
         {/* Hashtags */}
         {article.hashtags.length > 0 && (
@@ -190,7 +218,7 @@ export default function ArticleDetailPage() {
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-purple-500 flex items-center justify-center">
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <h3 className="text-sm font-semibold text-foreground">AI要約</h3>
+              <h3 className="text-sm font-semibold text-foreground">概要</h3>
             </div>
             <p className="text-sm text-foreground/80 leading-relaxed">
               {article.aiSummary}
@@ -261,6 +289,36 @@ export default function ArticleDetailPage() {
           note.comの元記事ページが新しいタブで開きます
         </p>
 
+        {/* Read Prompt (shows after opening note) */}
+        <AnimatePresence>
+          {showReadPrompt && article.status === "unread" && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-success-50 to-emerald-50 border border-success-200"
+            >
+              <p className="text-sm font-medium text-success-800 mb-3">
+                読み終わりましたか？ 🎉
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleMarkAsRead}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-success-500 text-white hover:bg-success-600 transition-colors"
+                >
+                  ✓ 読了にする
+                </button>
+                <button
+                  onClick={() => setShowReadPrompt(false)}
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium text-success-700 hover:bg-success-100 transition-colors"
+                >
+                  まだ
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Reading Management Card */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
@@ -270,22 +328,32 @@ export default function ArticleDetailPage() {
         >
           <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
             <StickyNote className="w-4 h-4 text-muted-foreground" />
-            読書管理
+            管理
           </h3>
 
           {/* Status Toggle */}
           <div className="flex items-center gap-2 mb-4">
-            <button
-              onClick={handleMarkAsRead}
-              className={cn(
-                "flex-1 py-2.5 rounded-xl text-sm font-medium transition-all",
-                article.status === "read"
-                  ? "bg-success-100 text-success-700 border border-success-200"
-                  : "bg-muted text-muted-foreground hover:bg-accent",
-              )}
-            >
-              {article.status === "read" ? "✓ 読了済み" : "読了にする"}
-            </button>
+            {article.status === "read" ? (
+              <>
+                <div className="flex-1 py-2.5 rounded-xl text-sm font-medium text-center bg-success-100 text-success-700 border border-success-200">
+                  ✓ 読了済み
+                </div>
+                <button
+                  onClick={handleMarkAsUnread}
+                  className="px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-accent transition-colors"
+                  title="未読に戻す"
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleMarkAsRead}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-muted text-muted-foreground hover:bg-accent transition-all"
+              >
+                読了にする
+              </button>
+            )}
           </div>
 
           {/* Memo */}
@@ -327,12 +395,14 @@ export default function ArticleDetailPage() {
         {/* Article Info Footer */}
         <div className="mt-6 p-4 rounded-2xl bg-muted/50 border border-border">
           <dl className="space-y-2 text-xs">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">文字数</dt>
-              <dd className="text-foreground font-medium">
-                {article.wordCount.toLocaleString()}字
-              </dd>
-            </div>
+            {article.wordCount > 0 && (
+              <div className="flex justify-between">
+                <dt className="text-muted-foreground">文字数</dt>
+                <dd className="text-foreground font-medium">
+                  {article.wordCount.toLocaleString()}字
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-muted-foreground">種別</dt>
               <dd className="text-foreground font-medium capitalize">

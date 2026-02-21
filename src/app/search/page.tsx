@@ -18,6 +18,8 @@ export default function SearchPage() {
           a.hashtags.some((t) =>
             t.toLowerCase().includes(query.toLowerCase()),
           ) ||
+          a.creator.nickname.toLowerCase().includes(query.toLowerCase()) ||
+          a.creator.urlname.toLowerCase().includes(query.toLowerCase()) ||
           (a.excerpt || "").toLowerCase().includes(query.toLowerCase()),
       )
     : [];
@@ -31,7 +33,7 @@ export default function SearchPage() {
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <input
           type="text"
-          placeholder="キーワード、トピック、著者で検索..."
+          placeholder="タイトル、ハッシュタグ、クリエイター名で検索..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="w-full h-12 pl-12 pr-12 rounded-xl bg-muted border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"

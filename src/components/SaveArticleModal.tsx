@@ -1,53 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Bookmark,
-  FileText,
-  CheckSquare,
-  MessageSquare,
-  Loader2,
-  X,
-  Link as LinkIcon,
-} from "lucide-react";
+import { Loader2, X, Link as LinkIcon, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/store";
 import { motion, AnimatePresence } from "framer-motion";
 
-const ACTIONS = [
-  {
-    value: "read_later",
-    icon: <Bookmark className="w-5 h-5" />,
-    label: "後で読む",
-    description: "デフォルトの保存",
-    isDefault: true,
-  },
-  {
-    value: "notion_summary",
-    icon: <FileText className="w-5 h-5" />,
-    label: "要約をNotionに送る",
-    description: "3行要約を自動生成",
-  },
-  {
-    value: "todo_item",
-    icon: <CheckSquare className="w-5 h-5" />,
-    label: "ToDoリストに追加",
-    description: "タスクとして管理",
-  },
-  {
-    value: "slack_share",
-    icon: <MessageSquare className="w-5 h-5" />,
-    label: "Slackで共有",
-    description: "チームに共有",
-  },
-];
-
 export function SaveArticleModal() {
-  const { isSaveModalOpen, closeSaveModal, saveModalUrl, saveArticle } =
-    useAppStore();
+  const {
+    isSaveModalOpen,
+    closeSaveModal,
+    saveModalUrl,
+    saveArticle,
+    dbError,
+  } = useAppStore();
   const [url, setUrl] = useState(saveModalUrl);
-  const [selectedAction, setSelectedAction] = useState("read_later");
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const isValidNoteUrl =
     url.trim() === "" ||
@@ -57,10 +26,14 @@ export function SaveArticleModal() {
   const handleSave = async () => {
     if (!canSave) return;
     setIsSaving(true);
-    await saveArticle(url, selectedAction);
+    setSaveError(null);
+    try {
+      await saveArticle(url);
+      setUrl("");
+    } catch {
+      setSaveError("保存に失敗しました。もう一度お試しください。");
+    }
     setIsSaving(false);
-    setUrl("");
-    setSelectedAction("read_later");
   };
 
   return (
@@ -82,16 +55,16 @@ export function SaveArticleModal() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: "spring", stiffness: 500, damping: 30 }}
-            className="fixed inset-x-4 top-[10%] z-[61] max-w-lg mx-auto bg-card rounded-2xl shadow-2xl border border-border overflow-hidden"
+            className="fixed inset-x-4 top-[15%] z-[61] max-w-lg mx-auto bg-card rounded-2xl shadow-2xl border border-border overflow-hidden"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">
-                  note記事を保存
+                  noteを保存
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  note.comの記事URLを入力してください
+                  気になったnote記事を保存して、後で読みましょう
                 </p>
               </div>
               <button
@@ -103,7 +76,7 @@ export function SaveArticleModal() {
             </div>
 
             {/* URL Input */}
-            <div className="px-6 pt-4">
+            <div className="px-6 py-5">
               <div className="relative">
                 <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
@@ -111,6 +84,9 @@ export function SaveArticleModal() {
                   placeholder="https://note.com/username/n/n1234..."
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && canSave && !isSaving) handleSave();
+                  }}
                   className="w-full h-12 pl-10 pr-4 rounded-xl bg-muted border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
                   autoFocus
                 />
@@ -121,69 +97,19 @@ export function SaveArticleModal() {
                   note.comの記事URL（note.com/ユーザー名/n/記事ID）を入力してください
                 </p>
               )}
-            </div>
-
-            {/* Action Selection */}
-            <div className="px-6 pt-4 pb-2">
-              <label className="text-sm font-medium text-muted-foreground mb-3 block">
-                次のアクションを選択:
-              </label>
-              <div className="space-y-2">
-                {ACTIONS.map((action) => (
-                  <label
-                    key={action.value}
-                    className={cn(
-                      "flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all duration-200",
-                      selectedAction === action.value
-                        ? "border-primary-500 bg-primary-50"
-                        : "border-border hover:bg-accent",
-                    )}
-                  >
-                    <input
-                      type="radio"
-                      name="action"
-                      value={action.value}
-                      checked={selectedAction === action.value}
-                      onChange={(e) => setSelectedAction(e.target.value)}
-                      className="sr-only"
-                    />
-                    <div
-                      className={cn(
-                        "w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors",
-                        selectedAction === action.value
-                          ? "border-primary-500 bg-primary-500"
-                          : "border-border",
-                      )}
-                    >
-                      {selectedAction === action.value && (
-                        <div className="w-2 h-2 rounded-full bg-white" />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-muted-foreground">
-                          {action.icon}
-                        </span>
-                        <span className="text-sm font-medium text-foreground">
-                          {action.label}
-                        </span>
-                        {action.isDefault && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-primary-100 text-primary-700">
-                            推奨
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {action.description}
-                      </p>
-                    </div>
-                  </label>
-                ))}
-              </div>
+              {(saveError || dbError) && (
+                <p className="mt-2 text-xs text-error-600 flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {saveError || dbError}
+                </p>
+              )}
+              <p className="mt-3 text-xs text-muted-foreground">
+                保存すると、タイトル・著者・ハッシュタグを自動取得します
+              </p>
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border mt-2">
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
               <button
                 onClick={closeSaveModal}
                 disabled={isSaving}
@@ -206,10 +132,10 @@ export function SaveArticleModal() {
                 {isSaving ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    保存中...
+                    取得中...
                   </span>
                 ) : (
-                  "保存"
+                  "保存する"
                 )}
               </button>
             </div>
