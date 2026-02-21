@@ -97,6 +97,7 @@ export interface ReadingStats {
   totalRead: number;
   totalSaved: number;
   weeklyRead: number[];
+  weeklyGrowthPercent: number;
   topHashtags: { name: string; count: number }[];
   topCreators: { name: string; urlname: string; count: number }[];
   streak: number;

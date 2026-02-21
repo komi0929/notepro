@@ -3,6 +3,207 @@ import type { Article, ReadingStats, ArchiveSuggestion } from "./types";
 import { supabase, rowToArticle, articleToRow } from "./supabase";
 import type { ArticleRow } from "./supabase";
 
+// === 動的スコアリング ===
+
+/** 保存からの経過日数で鮮度を計算 (0〜1, 60日で0) */
+function calcFreshnessScore(savedAt: string): number {
+  const daysSinceSaved = (Date.now() - new Date(savedAt).getTime()) / 86400000;
+  return Math.max(0, Math.min(1, 1 - daysSinceSaved / 60));
+}
+
+/** 時間帯に合った読書時間かどうか */
+function isGoodTimeForReading(readingTime: number): boolean {
+  const hour = new Date().getHours();
+  // 朝・通勤: 短め (5-10分)
+  if (hour >= 6 && hour < 9) return readingTime <= 10;
+  // 昼休み: 中程度 (5-15分)
+  if (hour >= 12 && hour < 14) return readingTime <= 15;
+  // 夜: 長めもOK
+  if (hour >= 20) return true;
+  // それ以外: 短め推奨
+  return readingTime <= 10;
+}
+
+/** 記事の優先度を動的計算 */
+function calcPriority(article: Article): number {
+  const freshness = calcFreshnessScore(article.savedAt);
+  let score = 0;
+
+  // 未読は高優先度
+  if (article.status === "unread") score += 0.4;
+  else if (article.status === "reading") score += 0.3;
+
+  // 鮮度が高い = 優先度高い
+  score += freshness * 0.3;
+
+  // 時間帯にフィットする記事を優先
+  if (isGoodTimeForReading(article.readingTime)) score += 0.2;
+
+  // スキ数による補正 (多い = 質が高い可能性)
+  if (article.likeCount > 100) score += 0.1;
+
+  return Math.min(1, score);
+}
+
+/** 全記事のスコアを再計算して返す */
+function applyDynamicScores(articles: Article[]): Article[] {
+  return articles.map((a) => ({
+    ...a,
+    freshnessScore: calcFreshnessScore(a.savedAt),
+    priority: calcPriority(a),
+    expiryScore: calcFreshnessScore(a.savedAt),
+  }));
+}
+
+// === 統計計算 ===
+
+function computeStats(articles: Article[]): ReadingStats {
+  const readArticles = articles.filter((a) => a.status === "read");
+  const allArticles = articles.filter((a) => a.status !== "archived");
+
+  // === ハッシュタグ集計 ===
+  const tagCounts: Record<string, number> = {};
+  allArticles.forEach((a) => {
+    a.hashtags.forEach((tag) => {
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    });
+  });
+  const topHashtags = Object.entries(tagCounts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5)
+    .map(([name, count]) => ({ name, count }));
+
+  // === クリエイター集計 ===
+  const creatorCounts: Record<
+    string,
+    { name: string; urlname: string; count: number }
+  > = {};
+  allArticles.forEach((a) => {
+    const key = a.creator.urlname;
+    if (!creatorCounts[key]) {
+      creatorCounts[key] = { name: a.creator.nickname, urlname: key, count: 0 };
+    }
+    creatorCounts[key].count += 1;
+  });
+  const topCreators = Object.values(creatorCounts)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  // === 週間読了数（直近7日の読了日から計算） ===
+  const weeklyRead = [0, 0, 0, 0, 0, 0, 0];
+  const now = new Date();
+  readArticles.forEach((a) => {
+    if (a.readAt) {
+      const readDate = new Date(a.readAt);
+      const dayDiff = Math.floor(
+        (now.getTime() - readDate.getTime()) / 86400000,
+      );
+      if (dayDiff < 7) {
+        const dayIndex = (readDate.getDay() + 6) % 7; // 月=0, 日=6
+        weeklyRead[dayIndex] += 1;
+      }
+    }
+  });
+
+  // === 先週の読了数（成長率計算用） ===
+  const lastWeeklyRead = [0, 0, 0, 0, 0, 0, 0];
+  readArticles.forEach((a) => {
+    if (a.readAt) {
+      const readDate = new Date(a.readAt);
+      const dayDiff = Math.floor(
+        (now.getTime() - readDate.getTime()) / 86400000,
+      );
+      if (dayDiff >= 7 && dayDiff < 14) {
+        const dayIndex = (readDate.getDay() + 6) % 7;
+        lastWeeklyRead[dayIndex] += 1;
+      }
+    }
+  });
+
+  const thisWeekTotal = weeklyRead.reduce((s, v) => s + v, 0);
+  const lastWeekTotal = lastWeeklyRead.reduce((s, v) => s + v, 0);
+  const weeklyGrowthPercent =
+    lastWeekTotal > 0
+      ? Math.round(((thisWeekTotal - lastWeekTotal) / lastWeekTotal) * 100)
+      : thisWeekTotal > 0
+        ? 100
+        : 0;
+
+  // === ストリーク計算（正確版） ===
+  // 読了日のセットを作成
+  const readDatesSet = new Set<string>();
+  readArticles.forEach((a) => {
+    if (a.readAt) {
+      const d = new Date(a.readAt);
+      readDatesSet.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+    }
+  });
+
+  // 現在のストリーク
+  let streak = 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 365; i++) {
+    const checkDate = new Date(today);
+    checkDate.setDate(checkDate.getDate() - i);
+    const key = `${checkDate.getFullYear()}-${checkDate.getMonth()}-${checkDate.getDate()}`;
+    if (readDatesSet.has(key)) {
+      streak++;
+    } else if (i > 0) {
+      // 今日まだ読んでない場合はスキップ（ストリークを維持）
+      break;
+    }
+  }
+
+  // ベストストリーク（全読了日から最長連続日数を算出）
+  let bestStreak = streak;
+  if (readDatesSet.size > 0) {
+    // 全読了日をソート
+    const sortedDates = Array.from(readDatesSet)
+      .map((s) => {
+        const [y, m, d] = s.split("-").map(Number);
+        return new Date(y, m, d).getTime();
+      })
+      .sort((a, b) => a - b);
+
+    let currentRun = 1;
+    for (let i = 1; i < sortedDates.length; i++) {
+      const diffDays = (sortedDates[i] - sortedDates[i - 1]) / 86400000;
+      if (diffDays === 1) {
+        currentRun++;
+        if (currentRun > bestStreak) bestStreak = currentRun;
+      } else if (diffDays > 1) {
+        currentRun = 1;
+      }
+      // diffDays === 0 はスキップ（同日の複数記事）
+    }
+  }
+
+  return {
+    totalRead: readArticles.length,
+    totalSaved: allArticles.length || 1,
+    weeklyRead,
+    weeklyGrowthPercent,
+    topHashtags:
+      topHashtags.length > 0
+        ? topHashtags
+        : [{ name: "まだデータなし", count: 0 }],
+    topCreators:
+      topCreators.length > 0
+        ? topCreators
+        : [{ name: "まだデータなし", urlname: "-", count: 0 }],
+    streak,
+    bestStreak,
+    averageReadingTime:
+      readArticles.length > 0
+        ? Math.round(
+            readArticles.reduce((sum, a) => sum + a.readingTime, 0) /
+              readArticles.length,
+          )
+        : 0,
+  };
+}
+
 // === Store ===
 interface AppState {
   // Articles
@@ -36,101 +237,27 @@ interface AppState {
   markAsRead: (id: string) => Promise<void>;
   updateMemo: (id: string, memo: string) => Promise<void>;
   deleteArticle: (id: string) => Promise<void>;
+  deleteAllArticles: () => Promise<void>;
 }
 
-// 記事データから統計を計算
-function computeStats(articles: Article[]): ReadingStats {
-  const readArticles = articles.filter((a) => a.status === "read");
-  const allArticles = articles.filter((a) => a.status !== "archived");
-
-  // ハッシュタグ集計
-  const tagCounts: Record<string, number> = {};
-  allArticles.forEach((a) => {
-    a.hashtags.forEach((tag) => {
-      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-    });
-  });
-  const topHashtags = Object.entries(tagCounts)
-    .sort(([, a], [, b]) => b - a)
-    .slice(0, 5)
-    .map(([name, count]) => ({ name, count }));
-
-  // クリエイター集計
-  const creatorCounts: Record<
-    string,
-    { name: string; urlname: string; count: number }
-  > = {};
-  allArticles.forEach((a) => {
-    const key = a.creator.urlname;
-    if (!creatorCounts[key]) {
-      creatorCounts[key] = { name: a.creator.nickname, urlname: key, count: 0 };
-    }
-    creatorCounts[key].count += 1;
-  });
-  const topCreators = Object.values(creatorCounts)
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
-
-  // 週間読了数（簡易: 直近7日の読了日から計算）
-  const weeklyRead = [0, 0, 0, 0, 0, 0, 0];
-  const now = new Date();
-  readArticles.forEach((a) => {
-    if (a.readAt) {
-      const readDate = new Date(a.readAt);
-      const dayDiff = Math.floor(
-        (now.getTime() - readDate.getTime()) / 86400000,
-      );
-      if (dayDiff < 7) {
-        const dayIndex = (readDate.getDay() + 6) % 7; // 月=0, 日=6
-        weeklyRead[dayIndex] += 1;
-      }
-    }
-  });
-
-  // ストリーク計算（簡易）
-  let streak = 0;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  for (let i = 0; i < 365; i++) {
-    const checkDate = new Date(today);
-    checkDate.setDate(checkDate.getDate() - i);
-    const hasRead = readArticles.some((a) => {
-      if (!a.readAt) return false;
-      const rd = new Date(a.readAt);
-      return (
-        rd.getFullYear() === checkDate.getFullYear() &&
-        rd.getMonth() === checkDate.getMonth() &&
-        rd.getDate() === checkDate.getDate()
-      );
-    });
-    if (hasRead) {
-      streak++;
-    } else if (i > 0) {
-      break;
-    }
-  }
+/** スコア付き記事からキュー・アーカイブ提案を導出 */
+function deriveFromArticles(articles: Article[]) {
+  const activeArticles = articles.filter((a) => a.status !== "archived");
 
   return {
-    totalRead: readArticles.length,
-    totalSaved: allArticles.length || 1, // divisionByZero防止
-    weeklyRead,
-    topHashtags:
-      topHashtags.length > 0
-        ? topHashtags
-        : [{ name: "まだデータなし", count: 0 }],
-    topCreators:
-      topCreators.length > 0
-        ? topCreators
-        : [{ name: "まだデータなし", urlname: "-", count: 0 }],
-    streak,
-    bestStreak: streak, // 簡易: 現在のストリーク = ベスト
-    averageReadingTime:
-      readArticles.length > 0
-        ? Math.round(
-            readArticles.reduce((sum, a) => sum + a.readingTime, 0) /
-              readArticles.length,
-          )
-        : 0,
+    queueArticles: activeArticles
+      .filter((a) => a.status === "unread" || a.status === "reading")
+      .sort((a, b) => b.priority - a.priority)
+      .slice(0, 3),
+    archiveSuggestions: activeArticles
+      .filter((a) => a.freshnessScore < 0.3 && a.status === "unread")
+      .map((a) => ({
+        ...a,
+        archiveReason: (a.freshnessScore < 0.15
+          ? "low_freshness"
+          : "unread_30_days") as ArchiveSuggestion["archiveReason"],
+      })),
+    readingStats: computeStats(articles),
   };
 }
 
@@ -142,6 +269,7 @@ export const useAppStore = create<AppState>((set) => ({
     totalRead: 0,
     totalSaved: 1,
     weeklyRead: [0, 0, 0, 0, 0, 0, 0],
+    weeklyGrowthPercent: 0,
     topHashtags: [{ name: "まだデータなし", count: 0 }],
     topCreators: [{ name: "まだデータなし", urlname: "-", count: 0 }],
     streak: 0,
@@ -151,22 +279,21 @@ export const useAppStore = create<AppState>((set) => ({
   isLoading: true,
   dbError: null,
 
+  // UI State
   isCommandPaletteOpen: false,
   isSaveModalOpen: false,
   isArchiveModalOpen: false,
   currentFilter: null,
   saveModalUrl: "",
 
+  // UI Actions
   toggleCommandPalette: () =>
-    set((state) => ({ isCommandPaletteOpen: !state.isCommandPaletteOpen })),
-
-  openSaveModal: (url?: string) =>
+    set((s) => ({ isCommandPaletteOpen: !s.isCommandPaletteOpen })),
+  openSaveModal: (url) =>
     set({ isSaveModalOpen: true, saveModalUrl: url || "" }),
   closeSaveModal: () => set({ isSaveModalOpen: false, saveModalUrl: "" }),
-
   openArchiveModal: () => set({ isArchiveModalOpen: true }),
   closeArchiveModal: () => set({ isArchiveModalOpen: false }),
-
   setFilter: (filter) => set({ currentFilter: filter }),
 
   // === DB Actions ===
@@ -182,24 +309,13 @@ export const useAppStore = create<AppState>((set) => ({
 
       if (error) throw error;
 
-      const articles = (data as ArticleRow[]).map(rowToArticle);
-      const activeArticles = articles.filter((a) => a.status !== "archived");
+      const rawArticles = (data as ArticleRow[]).map(rowToArticle);
+      // 動的スコアを適用
+      const articles = applyDynamicScores(rawArticles);
 
       set({
         articles,
-        queueArticles: activeArticles
-          .filter((a) => a.status === "unread" || a.status === "reading")
-          .sort((a, b) => b.priority - a.priority)
-          .slice(0, 3),
-        archiveSuggestions: activeArticles
-          .filter((a) => a.freshnessScore < 0.3 && a.status === "unread")
-          .map((a) => ({
-            ...a,
-            archiveReason: (a.freshnessScore < 0.2
-              ? "low_freshness"
-              : "unread_30_days") as ArchiveSuggestion["archiveReason"],
-          })),
-        readingStats: computeStats(articles),
+        ...deriveFromArticles(articles),
         isLoading: false,
       });
     } catch (err) {
@@ -257,6 +373,14 @@ export const useAppStore = create<AppState>((set) => ({
     }
 
     // 2. メタデータ付きでDBに保存
+    // excerptをaiSummaryとして利用（AI API不要）
+    const aiSummary = metadata.excerpt || null;
+    // ハッシュタグをキーポイントとして整形
+    const aiKeyPoints =
+      metadata.hashtags.length > 0
+        ? metadata.hashtags.slice(0, 5).map((tag) => `#${tag} に関する記事`)
+        : [];
+
     const newArticle: Omit<Article, "id"> = {
       userId: "demo_user",
       noteId,
@@ -284,8 +408,8 @@ export const useAppStore = create<AppState>((set) => ({
       readabilityScore: 0.7,
       expiryScore: 1.0,
       suggestedReadTime: null,
-      aiSummary: null,
-      aiKeyPoints: [],
+      aiSummary,
+      aiKeyPoints,
       savedAt: new Date().toISOString(),
       readAt: null,
       updatedAt: new Date().toISOString(),
@@ -304,12 +428,15 @@ export const useAppStore = create<AppState>((set) => ({
       const saved = rowToArticle(data as ArticleRow);
       console.log(`Article saved with action: ${action}`);
 
-      set((state) => ({
-        articles: [saved, ...state.articles],
-        readingStats: computeStats([saved, ...state.articles]),
-        isSaveModalOpen: false,
-        saveModalUrl: "",
-      }));
+      set((state) => {
+        const articles = applyDynamicScores([saved, ...state.articles]);
+        return {
+          articles,
+          ...deriveFromArticles(articles),
+          isSaveModalOpen: false,
+          saveModalUrl: "",
+        };
+      });
     } catch (err) {
       console.error("Failed to save article:", err);
       set({
@@ -334,10 +461,7 @@ export const useAppStore = create<AppState>((set) => ({
         );
         return {
           articles,
-          archiveSuggestions: state.archiveSuggestions.filter(
-            (a) => !ids.includes(a.id),
-          ),
-          readingStats: computeStats(articles),
+          ...deriveFromArticles(articles),
           isArchiveModalOpen: false,
         };
       });
@@ -377,7 +501,7 @@ export const useAppStore = create<AppState>((set) => ({
               }
             : a,
         );
-        return { articles, readingStats: computeStats(articles) };
+        return { articles, ...deriveFromArticles(articles) };
       });
     } catch (err) {
       console.error("Failed to update progress:", err);
@@ -405,7 +529,7 @@ export const useAppStore = create<AppState>((set) => ({
             ? { ...a, status: "read" as const, progress: 1.0, readAt: now }
             : a,
         );
-        return { articles, readingStats: computeStats(articles) };
+        return { articles, ...deriveFromArticles(articles) };
       });
     } catch (err) {
       console.error("Failed to mark as read:", err);
@@ -437,10 +561,40 @@ export const useAppStore = create<AppState>((set) => ({
 
       set((state) => {
         const articles = state.articles.filter((a) => a.id !== id);
-        return { articles, readingStats: computeStats(articles) };
+        return { articles, ...deriveFromArticles(articles) };
       });
     } catch (err) {
       console.error("Failed to delete article:", err);
+    }
+  },
+
+  deleteAllArticles: async () => {
+    try {
+      const { error } = await supabase
+        .from("articles")
+        .delete()
+        .eq("user_id", "demo_user");
+
+      if (error) throw error;
+
+      set({
+        articles: [],
+        queueArticles: [],
+        archiveSuggestions: [],
+        readingStats: {
+          totalRead: 0,
+          totalSaved: 1,
+          weeklyRead: [0, 0, 0, 0, 0, 0, 0],
+          weeklyGrowthPercent: 0,
+          topHashtags: [{ name: "まだデータなし", count: 0 }],
+          topCreators: [{ name: "まだデータなし", urlname: "-", count: 0 }],
+          streak: 0,
+          bestStreak: 0,
+          averageReadingTime: 0,
+        },
+      });
+    } catch (err) {
+      console.error("Failed to delete all articles:", err);
     }
   },
 }));

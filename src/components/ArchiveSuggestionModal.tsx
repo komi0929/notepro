@@ -41,8 +41,7 @@ export function ArchiveSuggestionModal() {
 
   const handleArchive = async () => {
     setIsArchiving(true);
-    await new Promise((r) => setTimeout(r, 600));
-    archiveArticles(Array.from(selectedIds));
+    await archiveArticles(Array.from(selectedIds));
     setIsArchiving(false);
     setSelectedIds(new Set());
   };

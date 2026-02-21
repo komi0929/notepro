@@ -86,10 +86,22 @@ export default function StatsPage() {
           <h3 className="text-base font-semibold text-foreground">
             今週の読書量
           </h3>
-          <div className="flex items-center gap-1 text-sm text-success-600">
-            <TrendingUp className="w-4 h-4" />
-            <span className="font-medium">+20%</span>
-          </div>
+          {readingStats.weeklyGrowthPercent !== 0 && (
+            <div
+              className={cn(
+                "flex items-center gap-1 text-sm",
+                readingStats.weeklyGrowthPercent > 0
+                  ? "text-success-600"
+                  : "text-error-600",
+              )}
+            >
+              <TrendingUp className="w-4 h-4" />
+              <span className="font-medium">
+                {readingStats.weeklyGrowthPercent > 0 ? "+" : ""}
+                {readingStats.weeklyGrowthPercent}%
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex items-end justify-between gap-2 h-40">
@@ -223,10 +235,18 @@ export default function StatsPage() {
       >
         <Zap className="w-6 h-6 text-primary-500 mx-auto mb-2" />
         <p className="text-sm font-medium text-foreground mb-0.5">
-          いい調子です！🎉
+          {readingStats.streak >= 3
+            ? `${readingStats.streak}日連続読書中！🔥`
+            : readingStats.totalRead > 0
+              ? "いい調子です！🎉"
+              : "最初の記事を読了しましょう 📚"}
         </p>
         <p className="text-xs text-muted-foreground">
-          先週より記事の消化ペースが上がっています
+          {readingStats.weeklyGrowthPercent > 0
+            ? `先週より${readingStats.weeklyGrowthPercent}%多く読んでいます`
+            : readingStats.totalRead > 0
+              ? `合計${readingStats.totalRead}記事を読了しました`
+              : "note.comの記事を保存して読書を始めましょう"}
         </p>
       </motion.div>
     </div>
